@@ -9,6 +9,7 @@ import com.gn4.seatreservation.entity.Seat
 import com.gn4.seatreservation.entity.SeatStatus
 import com.gn4.seatreservation.repository.ReservationRepository
 import com.gn4.seatreservation.repository.SeatRepository
+import com.gn4.seatreservation.sse.SeatSseBroadcaster
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
@@ -21,6 +22,7 @@ class SeatServiceImpl(
     private val seatRepository: SeatRepository,
     private val reservationRepository: ReservationRepository,
     private val clock: Clock,
+    private val broadcaster: SeatSseBroadcaster,
 ) : SeatService {
     companion object {
         // HOLD 유지 시간(초).
@@ -90,7 +92,9 @@ class SeatServiceImpl(
                 seatRepository.findById(seatId).orElseThrow {
                     NoSuchElementException("Seat($seatId) not found after hold")
                 }
-            return updated.toDto(clientToken, now)
+            val dto = updated.toDto(clientToken, now)
+            broadcaster.broadcastSeatUpdate(dto) // ← 브로드캐스트
+            return dto
         }
 
         // 6. 경쟁 상황. 최신 상태로 분기.
@@ -156,7 +160,9 @@ class SeatServiceImpl(
         seat.holdExpiresAt = base.plusSeconds(HEARTBEAT_EXTEND_SECONDS)
         seat.updatedAt = now
 
-        return seat.toDto(clientToken, now)
+        val dto = seat.toDto(clientToken, now)
+        broadcaster.broadcastSeatUpdate(dto)
+        return dto
     }
 
     @Transactional
@@ -200,6 +206,7 @@ class SeatServiceImpl(
             seat.holdToken = null
             seat.holdExpiresAt = null
             seat.updatedAt = now
+            broadcaster.broadcastSeatUpdate(seat.toDto(clientToken, now))
             throw SeatConflictException(
                 ErrorCodes.INTENTIONAL_FAILURE,
                 "Reservation failed due to simulated failure. Please try again.",
@@ -211,6 +218,7 @@ class SeatServiceImpl(
             seat.status = SeatStatus.RESERVED
             seat.reservedAt = seat.reservedAt ?: now
             seat.updatedAt = now
+            broadcaster.broadcastSeatUpdate(seat.toDto(clientToken, now))
             return ReservationSummary(
                 seatId = seatId,
                 name = req.name,
@@ -232,6 +240,7 @@ class SeatServiceImpl(
             ),
         )
 
+        broadcaster.broadcastSeatUpdate(seat.toDto(clientToken, now))
         return ReservationSummary(
             seatId = seatId,
             name = req.name,
@@ -245,10 +254,10 @@ class SeatServiceImpl(
     ): SeatDto {
         val heldByMe =
             this.status == SeatStatus.HELD &&
-                this.holdToken != null &&
-                clientToken != null &&
-                this.holdToken == clientToken &&
-                (this.holdExpiresAt == null || this.holdExpiresAt!!.isAfter(now))
+                    this.holdToken != null &&
+                    clientToken != null &&
+                    this.holdToken == clientToken &&
+                    (this.holdExpiresAt == null || this.holdExpiresAt!!.isAfter(now))
 
         return SeatDto(
             id = requireNotNull(this.id),
