@@ -118,7 +118,45 @@ class SeatServiceImpl(
         seatId: Long,
         clientToken: String,
     ): SeatDto {
-        error("Will be implemented in step 8 (HEARTBEAT logic)")
+        val now = Instant.now(clock)
+
+        // 1. 좌석 조회
+        val seat =
+            seatRepository.findById(seatId).orElseThrow {
+                NoSuchElementException("Seat($seatId) not found")
+            }
+
+        // 2. 예약 완료 좌석이면 연장 불가
+        if (seat.status == SeatStatus.RESERVED) {
+            throw SeatConflictException(
+                ErrorCodes.SEAT_ALREADY_RESERVED,
+                "Seat($seatId) is already reserved.",
+            )
+        }
+
+        // 3. HELD가 아니거나 토큰이 불일치면 거부
+        if (seat.status != SeatStatus.HELD || seat.holdToken != clientToken) {
+            throw SeatConflictException(
+                ErrorCodes.NOT_HELD_BY_CLIENT,
+                "Seat($seatId) is not held by this client.",
+            )
+        }
+
+        // 4. 만료되었으면 거부
+        val notExpired = seat.holdExpiresAt?.isAfter(now) ?: false
+        if (!notExpired) {
+            throw SeatConflictException(
+                ErrorCodes.HOLD_EXPIRED,
+                "Hold for seat($seatId) has expired.",
+            )
+        }
+
+        // 5. 연장
+        val base = seat.holdExpiresAt?.let { if (it.isAfter(now)) it else now } ?: now
+        seat.holdExpiresAt = base.plusSeconds(HEARTBEAT_EXTEND_SECONDS)
+        seat.updatedAt = now
+
+        return seat.toDto(clientToken, now)
     }
 
     @Transactional
