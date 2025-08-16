@@ -254,10 +254,10 @@ class SeatServiceImpl(
     ): SeatDto {
         val heldByMe =
             this.status == SeatStatus.HELD &&
-                    this.holdToken != null &&
-                    clientToken != null &&
-                    this.holdToken == clientToken &&
-                    (this.holdExpiresAt == null || this.holdExpiresAt!!.isAfter(now))
+                this.holdToken != null &&
+                clientToken != null &&
+                this.holdToken == clientToken &&
+                (this.holdExpiresAt == null || this.holdExpiresAt!!.isAfter(now))
 
         return SeatDto(
             id = requireNotNull(this.id),
