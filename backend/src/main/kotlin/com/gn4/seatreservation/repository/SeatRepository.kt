@@ -25,7 +25,7 @@ interface SeatRepository : JpaRepository<Seat, Long> {
      *  - 상태가 AVAILABLE이거나, HELD지만 만료된 경우에만 HELD로 전환
      *  - 반환값은 영향받은 행 수(1: 성공, 0: 실패)
      */
-    @Modifying
+    @Modifying(clearAutomatically = true)
     @Query(
         value = """
         UPDATE seat
@@ -54,7 +54,7 @@ interface SeatRepository : JpaRepository<Seat, Long> {
     /**
      * 만료된 HOLD를 즉시 해제(AVAILABLE로)
      */
-    @Modifying
+    @Modifying(clearAutomatically = true)
     @Query(
         value = """
         UPDATE seat
