@@ -23,13 +23,13 @@ class SeatServiceImpl(
     private val clock: Clock,
 ) : SeatService {
     companion object {
-        // HOLD 유지 시간(초)
+        // HOLD 유지 시간(초).
         private const val HOLD_TTL_SECONDS: Long = 90
 
-        // HEARTBEAT로 연장하는 시간(초)
+        // HEARTBEAT로 연장하는 시간(초).
         private const val HEARTBEAT_EXTEND_SECONDS: Long = 60
 
-        // 예약 의도적 실패 확률(1%)
+        // 예약 의도적 실패 확률(1%).
         private const val INTENTIONAL_FAILURE_RATE: Double = 0.01
     }
 
@@ -45,16 +45,16 @@ class SeatServiceImpl(
     ): SeatDto {
         val now = Instant.now(clock)
 
-        // 1. 만료된 HOLD 정리
+        // 1. 만료된 HOLD 정리.
         seatRepository.releaseExpiredHolds(now)
 
-        // 2. 좌석 조회 (없으면 404)
+        // 2. 좌석 조회. 없으면 404.
         val seat =
             seatRepository.findById(seatId).orElseThrow {
                 NoSuchElementException("Seat($seatId) not found")
             }
 
-        // 3. 이미 예약 완료면 409
+        // 3. 이미 예약 완료면 409.
         if (seat.status == SeatStatus.RESERVED) {
             throw SeatConflictException(
                 ErrorCodes.SEAT_ALREADY_RESERVED,
@@ -62,21 +62,21 @@ class SeatServiceImpl(
             )
         }
 
-        // 4. 아직 만료되지 않은 HELD 상태
+        // 4. 아직 만료되지 않은 HELD 상태.
         val notExpired = seat.holdExpiresAt?.isAfter(now) ?: false
         if (seat.status == SeatStatus.HELD && notExpired) {
-            // 내가 잡은 HOLD면 멱등 처리
+            // 내가 잡은 HOLD면 멱등 처리.
             if (seat.holdToken == clientToken) {
                 return seat.toDto(clientToken, now)
             }
-            // 남이 잡은 HOLD면 409
+            // 남이 잡은 HOLD면 409.
             throw SeatConflictException(
                 ErrorCodes.SEAT_HELD_BY_OTHERS,
                 "Seat($seatId) is held by another client.",
             )
         }
 
-        // 5. AVAILABLE 이거나 HELD지만 만료된 경우 → 조건부 HOLD 시도(원자적 업데이트)
+        // 5. AVAILABLE 이거나 HELD지만 만료된 경우 → 조건부 HOLD 시도(원자적 업데이트).
         val affected =
             seatRepository.tryHold(
                 id = seatId,
@@ -93,7 +93,7 @@ class SeatServiceImpl(
             return updated.toDto(clientToken, now)
         }
 
-        // 6. 경쟁 상황: 최신 상태로 분기
+        // 6. 경쟁 상황. 최신 상태로 분기.
         val latest =
             seatRepository.findById(seatId).orElseThrow {
                 NoSuchElementException("Seat($seatId) not found")
@@ -120,13 +120,13 @@ class SeatServiceImpl(
     ): SeatDto {
         val now = Instant.now(clock)
 
-        // 1. 좌석 조회
+        // 1. 좌석 조회.
         val seat =
             seatRepository.findById(seatId).orElseThrow {
                 NoSuchElementException("Seat($seatId) not found")
             }
 
-        // 2. 예약 완료 좌석이면 연장 불가
+        // 2. 예약 완료 좌석이면 연장 불가.
         if (seat.status == SeatStatus.RESERVED) {
             throw SeatConflictException(
                 ErrorCodes.SEAT_ALREADY_RESERVED,
@@ -134,7 +134,7 @@ class SeatServiceImpl(
             )
         }
 
-        // 3. HELD가 아니거나 토큰이 불일치면 거부
+        // 3. HELD가 아니거나 토큰이 불일치면 거부.
         if (seat.status != SeatStatus.HELD || seat.holdToken != clientToken) {
             throw SeatConflictException(
                 ErrorCodes.NOT_HELD_BY_CLIENT,
@@ -142,7 +142,7 @@ class SeatServiceImpl(
             )
         }
 
-        // 4. 만료되었으면 거부
+        // 4. 만료되었으면 거부.
         val notExpired = seat.holdExpiresAt?.isAfter(now) ?: false
         if (!notExpired) {
             throw SeatConflictException(
@@ -151,7 +151,7 @@ class SeatServiceImpl(
             )
         }
 
-        // 5. 연장
+        // 5. 연장. 단축되지 않도록 보장.
         val base = seat.holdExpiresAt?.let { if (it.isAfter(now)) it else now } ?: now
         seat.holdExpiresAt = base.plusSeconds(HEARTBEAT_EXTEND_SECONDS)
         seat.updatedAt = now
@@ -165,7 +165,78 @@ class SeatServiceImpl(
         clientToken: String,
         req: ReserveRequest,
     ): ReservationSummary {
-        error("Will be implemented in step 9 (RESERVE logic)")
+        val now = Instant.now(clock)
+
+        // 1. 좌석을 쓰기 락으로 조회.
+        val seat =
+            seatRepository.findByIdForUpdate(seatId).orElseThrow {
+                NoSuchElementException("Seat($seatId) not found")
+            }
+
+        // 2. 상태/토큰/만료 검증.
+        if (seat.status == SeatStatus.RESERVED) {
+            throw SeatConflictException(
+                ErrorCodes.SEAT_ALREADY_RESERVED,
+                "Seat($seatId) is already reserved.",
+            )
+        }
+        if (seat.status != SeatStatus.HELD || seat.holdToken != clientToken) {
+            throw SeatConflictException(
+                ErrorCodes.NOT_HELD_BY_CLIENT,
+                "Seat($seatId) is not held by this client.",
+            )
+        }
+        val notExpired = seat.holdExpiresAt?.isAfter(now) ?: false
+        if (!notExpired) {
+            throw SeatConflictException(
+                ErrorCodes.HOLD_EXPIRED,
+                "Hold for seat($seatId) has expired.",
+            )
+        }
+
+        // 3. 1% 의도적 실패 처리. 좌석을 AVAILABLE로 되돌리고 에러.
+        if (Math.random() < INTENTIONAL_FAILURE_RATE) {
+            seat.status = SeatStatus.AVAILABLE
+            seat.holdToken = null
+            seat.holdExpiresAt = null
+            seat.updatedAt = now
+            throw SeatConflictException(
+                ErrorCodes.INTENTIONAL_FAILURE,
+                "Reservation failed due to simulated failure. Please try again.",
+            )
+        }
+
+        // 4. 이중 방어. 이미 예약 레코드가 있으면 RESERVED로 간주.
+        if (reservationRepository.existsBySeatId(seatId)) {
+            seat.status = SeatStatus.RESERVED
+            seat.reservedAt = seat.reservedAt ?: now
+            seat.updatedAt = now
+            return ReservationSummary(
+                seatId = seatId,
+                name = req.name,
+                reservedAt = DateTimeFormatter.ISO_INSTANT.format(seat.reservedAt),
+            )
+        }
+
+        // 5. 성공 처리. 좌석 RESERVED 전환 + 예약 레코드 생성.
+        seat.status = SeatStatus.RESERVED
+        seat.reservedAt = now
+        seat.updatedAt = now
+
+        reservationRepository.save(
+            com.gn4.seatreservation.entity.Reservation(
+                seatId = seatId,
+                name = req.name,
+                phone = req.phone,
+                reservedAt = now,
+            ),
+        )
+
+        return ReservationSummary(
+            seatId = seatId,
+            name = req.name,
+            reservedAt = DateTimeFormatter.ISO_INSTANT.format(now),
+        )
     }
 
     private fun Seat.toDto(
