@@ -1,5 +1,7 @@
 package com.gn4.seatreservation.service
 
+import com.gn4.seatreservation.config.ErrorCodes
+import com.gn4.seatreservation.config.SeatConflictException
 import com.gn4.seatreservation.dto.ReservationSummary
 import com.gn4.seatreservation.dto.ReserveRequest
 import com.gn4.seatreservation.dto.SeatDto
@@ -36,13 +38,79 @@ class SeatServiceImpl(
         return seatRepository.findAll().map { it.toDto(clientToken, now) }
     }
 
-    // 다음 단계(7~9단계)에서 트랜잭션 로직을 채운다.
     @Transactional
     override fun hold(
         seatId: Long,
         clientToken: String,
     ): SeatDto {
-        error("Will be implemented in step 7 (HOLD logic)")
+        val now = Instant.now(clock)
+
+        // 1. 만료된 HOLD 정리
+        seatRepository.releaseExpiredHolds(now)
+
+        // 2. 좌석 조회 (없으면 404)
+        val seat =
+            seatRepository.findById(seatId).orElseThrow {
+                NoSuchElementException("Seat($seatId) not found")
+            }
+
+        // 3. 이미 예약 완료면 409
+        if (seat.status == SeatStatus.RESERVED) {
+            throw SeatConflictException(
+                ErrorCodes.SEAT_ALREADY_RESERVED,
+                "Seat($seatId) is already reserved.",
+            )
+        }
+
+        // 4. 아직 만료되지 않은 HELD 상태
+        val notExpired = seat.holdExpiresAt?.isAfter(now) ?: false
+        if (seat.status == SeatStatus.HELD && notExpired) {
+            // 내가 잡은 HOLD면 멱등 처리
+            if (seat.holdToken == clientToken) {
+                return seat.toDto(clientToken, now)
+            }
+            // 남이 잡은 HOLD면 409
+            throw SeatConflictException(
+                ErrorCodes.SEAT_HELD_BY_OTHERS,
+                "Seat($seatId) is held by another client.",
+            )
+        }
+
+        // 5. AVAILABLE 이거나 HELD지만 만료된 경우 → 조건부 HOLD 시도(원자적 업데이트)
+        val affected =
+            seatRepository.tryHold(
+                id = seatId,
+                token = clientToken,
+                expiresAt = now.plusSeconds(HOLD_TTL_SECONDS),
+                nowTs = now,
+            )
+
+        if (affected == 1) {
+            val updated =
+                seatRepository.findById(seatId).orElseThrow {
+                    NoSuchElementException("Seat($seatId) not found after hold")
+                }
+            return updated.toDto(clientToken, now)
+        }
+
+        // 6. 경쟁 상황: 최신 상태로 분기
+        val latest =
+            seatRepository.findById(seatId).orElseThrow {
+                NoSuchElementException("Seat($seatId) not found")
+            }
+        return when (latest.status) {
+            SeatStatus.RESERVED -> throw SeatConflictException(
+                ErrorCodes.SEAT_ALREADY_RESERVED,
+                "Seat($seatId) just got reserved.",
+            )
+
+            SeatStatus.HELD -> throw SeatConflictException(
+                ErrorCodes.SEAT_HELD_BY_OTHERS,
+                "Seat($seatId) is held by another client.",
+            )
+
+            else -> throw IllegalStateException("Failed to hold seat($seatId) for unknown reason.")
+        }
     }
 
     @Transactional
