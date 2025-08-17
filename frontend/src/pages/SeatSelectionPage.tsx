@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 // 좌석 상태 정의
-type SeatStatus = 'available' | 'pending' | 'occupied';
+type SeatStatus = "available" | "pending" | "occupied";
 
 // 좌석 타입 정의
 interface Seat {
@@ -26,7 +26,7 @@ const SeatSelectionPage: React.FC = () => {
         id: `seat-${rowLabel}${colLabel}`,
         row: rowIndex,
         col: colIndex,
-        status: 'available', // 초기에는 모두 예약 가능
+        status: "available", // 초기에는 모두 예약 가능
         label: `${rowLabel}${colLabel}`, // 좌석 레이블 설정
       };
     })
@@ -35,13 +35,15 @@ const SeatSelectionPage: React.FC = () => {
   const [seats, setSeats] = useState<Seat[]>(initialSeats);
 
   const handleSeatClick = (clickedSeat: Seat) => {
-    if (clickedSeat.status === 'occupied') {
-      alert('이미 예약된 좌석입니다.');
+    if (clickedSeat.status === "occupied") {
+      alert("이미 예약된 좌석입니다.");
       return;
     }
 
     setSelectedSeats((prevSelectedSeats) => {
-      const isSelected = prevSelectedSeats.some((seat) => seat.id === clickedSeat.id);
+      const isSelected = prevSelectedSeats.some(
+        (seat) => seat.id === clickedSeat.id
+      );
       if (isSelected) {
         // 이미 선택된 좌석이면 선택 해제
         return prevSelectedSeats.filter((seat) => seat.id !== clickedSeat.id);
@@ -54,11 +56,11 @@ const SeatSelectionPage: React.FC = () => {
 
   const handleReservation = () => {
     if (selectedSeats.length === 0) {
-      alert('좌석을 선택해주세요.');
+      alert("좌석을 선택해주세요.");
       return;
     }
     // 선택된 좌석 정보를 가지고 예약 폼 페이지로 이동
-    navigate('/reservation-form', { state: { selectedSeats } });
+    navigate("/reservation-form", { state: { selectedSeats } });
   };
 
   return (
@@ -67,17 +69,17 @@ const SeatSelectionPage: React.FC = () => {
       <div className="grid grid-cols-3 gap-4 w-64 mx-auto">
         {seats.map((seat) => {
           const isSelected = selectedSeats.some((s) => s.id === seat.id);
-          let seatClass = 'p-4 border rounded text-center cursor-pointer';
-          if (seat.status === 'available') {
-            seatClass += ' bg-green-200 hover:bg-green-300';
-          } else if (seat.status === 'pending') {
-            seatClass += ' bg-yellow-200';
-          } else if (seat.status === 'occupied') {
-            seatClass += ' bg-red-400 cursor-not-allowed';
+          let seatClass = "p-4 border rounded text-center cursor-pointer";
+          if (seat.status === "available") {
+            seatClass += " bg-green-200 hover:bg-green-300";
+          } else if (seat.status === "pending") {
+            seatClass += " bg-yellow-200";
+          } else if (seat.status === "occupied") {
+            seatClass += " bg-red-400 cursor-not-allowed";
           }
 
           if (isSelected) {
-            seatClass += ' ring-2 ring-blue-500'; // 선택된 좌석에 파란색 테두리 추가
+            seatClass += " ring-2 ring-blue-500"; // 선택된 좌석에 파란색 테두리 추가
           }
 
           return (
@@ -94,7 +96,7 @@ const SeatSelectionPage: React.FC = () => {
       <div className="mt-8 text-center">
         <h2 className="text-xl font-semibold mb-2">선택된 좌석:</h2>
         {selectedSeats.length > 0 ? (
-          <p>{selectedSeats.map(s => s.label).join(', ')}</p>
+          <p>{selectedSeats.map((s) => s.label).join(", ")}</p>
         ) : (
           <p>선택된 좌석이 없습니다.</p>
         )}
